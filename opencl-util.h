@@ -2,7 +2,7 @@
 #include <fstream>
 #include <stdlib.h>
 #include <iostream>
-#include <CL/opencl.h>
+#include <vector>
 
 const char* getErrorString(cl_int error)
 {
@@ -110,20 +110,126 @@ void assert_cl_success(const cl_int err, const char* message) {
 	}
 }
 
-struct CL_Device_Info {
+class CL_Device_Info {
+public:
+	cl_int err;
 	cl_platform_id platform_id;
 	cl_device_id device_id;
-	cl_uint num_platforms;
-	cl_uint num_devices;
+
+	const char* platform_attr_names[5] = { "Name", "Vendor", "Version", "Profile", "Extensions" };
+	const cl_platform_info platform_attr_types[5] = { CL_PLATFORM_NAME, CL_PLATFORM_VENDOR,
+		CL_PLATFORM_VERSION, CL_PLATFORM_PROFILE, CL_PLATFORM_EXTENSIONS };
+
+	const char* device_attr_names[4] = { "Name", "Device Version", "Driver Version", "Parallel Computing Units" };
+	const cl_device_info device_attr_types[4] = { CL_DEVICE_NAME, CL_DEVICE_VERSION,
+		CL_DRIVER_VERSION, CL_DEVICE_MAX_COMPUTE_UNITS};
+
+	cl_uint get_num_platforms() {
+		cl_uint num_platforms;
+		err = clGetPlatformIDs(0, NULL, &num_platforms);
+		assert_cl_success(err, "Error getting number of OpenCL platforms");
+
+		return num_platforms;
+	}
+
+	cl_platform_id* get_platforms() {
+		cl_uint num_platforms = get_num_platforms();
+		cl_platform_id* platforms = (cl_platform_id*)malloc(sizeof(cl_platform_id) * num_platforms);
+
+		err = clGetPlatformIDs(num_platforms, platforms, NULL);
+		assert_cl_success(err, "Error getting OpenCL platform IDs");
+		return platforms;
+	}
+
+	cl_uint get_num_devices(cl_platform_id platform_id) {
+		cl_uint num_devices;
+
+		err = clGetDeviceIDs(platform_id, CL_DEVICE_TYPE_ALL, 0, NULL, &num_devices);
+		assert_cl_success(err, "Error getting number of OpenCL platform devices");
+		return num_devices;
+	}
+
+	cl_device_id* get_devices(cl_platform_id platform_id) {
+		cl_uint num_devices = get_num_devices(platform_id);
+		cl_device_id* devices = (cl_device_id*)malloc(sizeof(cl_device_id) * num_devices);
+
+		err = clGetDeviceIDs(platform_id, CL_DEVICE_TYPE_ALL, num_devices, devices, NULL);
+		assert_cl_success(err, "Error getting OpenCL device IDs");
+		return devices;
+	}
+
+	void print_platform_information(cl_platform_id platform, int i) {
+		std::cout << "Platform " << i << "\n";
+		char* info;
+		size_t info_size;
+		for (int i = 0; i < 3; i++) {
+			err = clGetPlatformInfo(platform, platform_attr_types[i], 0, NULL, &info_size);
+			assert_cl_success(err, "Error getting OpenCL platform info.");
+			
+			info = (char*)malloc(info_size);
+
+			clGetPlatformInfo(platform, platform_attr_types[i], info_size, info, NULL);
+			std::cout << "\t" << platform_attr_names[i] << ": " << info << "\n";
+			free(info);
+		}
+	}
+
+	void print_device_information(cl_device_id device, int i) {
+		std::cout << "\n\tDevice " << i << "\n";
+		char* info;
+		size_t info_size;
+		int l = sizeof(device_attr_types) / sizeof(*device_attr_types) - 1;
+		for (int i = 0; i < l; i++) {
+			err = clGetDeviceInfo(device, device_attr_types[i], 0, NULL, &info_size);
+			assert_cl_success(err, "Error getting OpenCL device info.");
+
+			info = (char*)malloc(info_size);
+
+			clGetDeviceInfo(device, device_attr_types[i], info_size, info, NULL);
+			std::cout << "\t\t" << device_attr_names[i] << ": " << info << "\n";
+			free(info);
+		}
+
+		cl_uint max_compute_units;
+		err = clGetDeviceInfo(device, device_attr_types[l], -1, &max_compute_units, NULL);
+		assert_cl_success(err, "Error getting OpenCL device info.");
+		std::cout << "\t\t" << device_attr_names[l] << ": " << max_compute_units << "\n";
+
+		cl_uint max_clock_freq;
+		err = clGetDeviceInfo(device, CL_DEVICE_MAX_CLOCK_FREQUENCY, -1, &max_clock_freq, NULL);
+		assert_cl_success(err, "Error getting OpenCL device info.");
+		std::cout << "\t\tMax Clock Frequency: " << max_clock_freq << "MHz\n";
+	}
+
+	void print_hardware_information() {
+		std::cout << "Information found: \n\n";
+		for (int i = 0; i < (int)num_platforms; i++) {
+			print_platform_information(platforms[i], i);
+			for (int j = 0; j < (int)num_devices[i]; j++) {
+				print_device_information(devices[i][j], j);
+			}
+		}
+	}
 
 	CL_Device_Info() {
-		cl_int err;
-		err = clGetPlatformIDs(1, &platform_id, &num_platforms);
-		assert_cl_success(err, "Error getting OpenCL platform IDs");
+		platforms = get_platforms();
+		num_platforms = get_num_platforms();
 
-		err = clGetDeviceIDs(platform_id, CL_DEVICE_TYPE_DEFAULT, 1, &device_id, &num_devices);
-		assert_cl_success(err, "Error getting OpenCL device IDs");
+		num_devices = (cl_uint*)malloc(sizeof(cl_uint) * num_platforms);
+		for (int i = 0; i < (int)num_platforms; i++) {
+			num_devices[i] = get_num_devices(platforms[i]);
+			devices.push_back(get_devices(platforms[i]));
+		}
+		print_hardware_information();
+		platform_id = platforms[0];
+		device_id = devices[0][0];
 	}
+
+private:
+	cl_uint num_platforms;
+	cl_platform_id* platforms;
+	cl_uint* num_devices;
+	std::vector<cl_device_id*> devices;
 
 };
 
@@ -137,29 +243,29 @@ struct CL_Buffer {
 class CL_Util {
 public:
 	CL_Util() {
-		device_id = _get_device_id();
-
-		context = _create_context();
-
-		queue = _create_command_queue();
+		init();
 	}
 
 	CL_Util(const char* filename) {
-		device_id = _get_device_id();
-
-		context = _create_context();
-
-		queue = _create_command_queue();
+		init();
 
 		create_and_build_program(filename);
 	}
 
 	CL_Util(const char* filename, const char* function_name) {
-		device_id = _get_device_id();
+		init();
 
-		context = _create_context();
+		create_program_and_kernel(filename, function_name);
+	}
 
-		queue = _create_command_queue();
+	CL_Util(const char* filename, const char* function_name, size_t global_size, size_t local_size)
+	
+	{
+		init();
+
+		global_item_size = global_size;
+		local_item_size = local_size;
+
 
 		create_program_and_kernel(filename, function_name);
 	}
@@ -172,8 +278,9 @@ public:
 	cl_command_queue get_queue()       { return queue;       }
 	cl_program       get_program()     { return program;     }
 	cl_kernel        get_kernel()      { return kernel;      }
-
-	int get_current_kernel_arg() { return current_kernel_arg; } // Too big to format
+	size_t get_global_item_size() { return global_item_size;   }
+	size_t get_local_item_size()  { return local_item_size;    }
+	int get_current_kernel_arg()  { return current_kernel_arg; }
 
 	void create_program(const char* filename) {
 		program = _create_program(filename);
@@ -270,7 +377,37 @@ public:
 		set_kernel_arg(buffer.buffer);
 	}
 
-	void run_kernel(size_t global_item_size, size_t local_item_size) {
+	void set_global_item_size(size_t global_size) {
+		global_item_size = global_size;
+	}
+
+	void set_local_item_size(size_t local_size) {
+		local_item_size = local_size;
+	}
+
+	void set_item_sizes(size_t global_size, size_t local_size) {
+		set_global_item_size(global_size);
+		set_local_item_size(local_size);
+	}
+
+	void run_kernel(size_t global_size, size_t local_size) {
+		set_item_sizes(global_size, local_size);
+		run_kernel();
+	}
+
+	void run_kernel() {
+		
+		if (global_item_size <= 0) {
+			std::cout << "Global item size not initialized!" << "\n";
+			exit(1);
+		}
+		if (local_item_size <= 0) {
+			std::cout << "Local item size not initialized!" << "\n";
+			exit(1);
+		}
+		if (global_item_size % local_item_size != 0) {
+			std::cout << "Global item size must be divisible by local item size!" << "\n\n";
+		}
 		cl_int err = clEnqueueNDRangeKernel(queue, kernel, 1, 0, &global_item_size, &local_item_size,
 			0, nullptr, nullptr);
 		assert_cl_success(err, "Error enqueuing OpenCL kernel");
@@ -278,6 +415,7 @@ public:
 
 	void finish_queue() {
 		clFinish(queue);
+		current_kernel_arg = 0;
 	}
 
 private:
@@ -288,8 +426,18 @@ private:
 	cl_command_queue queue;
 	cl_program program;
 	cl_kernel kernel;
+	size_t global_item_size;
+	size_t local_item_size;
 
 	int current_kernel_arg = 0;
+
+	void init() {
+		device_id = _get_device_id();
+
+		context = _create_context();
+
+		queue = _create_command_queue();
+	}
 
 	void _assert_program_build_success(const cl_int err) {
 		if (err) {
@@ -316,7 +464,7 @@ private:
 	}
 
 	cl_device_id _get_device_id() {
-		device_info = CL_Device_Info();
+		//device_info = CL_Device_Info();
 		
 		return device_info.device_id;
 	}

@@ -110,6 +110,15 @@ public:
 		x = tx;
 		y = ty;
 	}
+
+	void rotateRad(float theta) {
+		float c = (float)cos(theta);
+		float s = (float)sin(theta);
+		float tx = x * c - y * s;
+		float ty = x * s + y * c;
+		x = tx;
+		y = ty;
+	}
 	
 	Vec2& normalize() {
 		if (length() == 0) return *this;
@@ -129,6 +138,11 @@ public:
 	float length() const {
 		return (float)sqrt((double)x * x + (double)y * y);
 	}
+
+	float angle() {
+		return (float)atan2f(y, x);
+	}
+
 	void truncate(float length) {
 		float angle = (float)atan2f(y, x);
 		x = length * (float)cos(angle);
@@ -160,6 +174,15 @@ public:
 			angle = (float)atan2((double)v2.y - v1.y, (double)v1.x - v2.x);
 
 		return angle;
+	}
+
+	static Vec2 rotate(Vec2 v, float deg) {
+		float theta = deg / 180.0f * (float)M_PI;
+		float c = (float)cos(theta);
+		float s = (float)sin(theta);
+		float tx = v.x * c - v.y * s;
+		float ty = v.x * s + v.y * c;
+		return Vec2(tx, ty);
 	}
 };
 
