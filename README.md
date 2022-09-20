@@ -1,1 +1,1 @@
-C++ utility header files for personal prrojects
+C++ utility header files for personal projects
