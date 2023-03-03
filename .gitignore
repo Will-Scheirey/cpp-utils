@@ -229,3 +229,5 @@ FakesAssemblies/
 **/*.HTMLClient/GeneratedArtifacts
 **/*.DesktopClient/GeneratedArtifacts
 **/*.DesktopClien
+*.sqlite
+.vs/cpp-utils/v17/.suo
