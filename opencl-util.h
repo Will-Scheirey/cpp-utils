@@ -324,9 +324,9 @@ private:
 	std::vector<CL_Device> devices;
 	cl_uint err;
 
-	std::vector<std::string> attr_names{ "Name", "Vendor", "Version", "Profile", "Extensions" };
+	std::vector<std::string> attr_names{ "Name", "Vendor", "Version", "Profile"};
 	std::vector<cl_platform_info> attr_types{ CL_PLATFORM_NAME, CL_PLATFORM_VENDOR,
-		CL_PLATFORM_VERSION, CL_PLATFORM_PROFILE, CL_PLATFORM_EXTENSIONS };
+		CL_PLATFORM_VERSION, CL_PLATFORM_PROFILE };
 
 	cl_uint _get_num_devices() {
 		cl_uint num_devices;
@@ -346,8 +346,11 @@ private:
 		if (!the_devices)
 			return;
 		for (int i = 0; i < (int)num_devices; i++) {
-			devices.push_back(CL_Device(the_devices[i]));
+			if (the_devices[i])
+				devices.push_back(CL_Device(the_devices[i]));
 		}
+
+		free(the_devices);
 	}
 };
 
@@ -365,7 +368,7 @@ public:
 		devices = {};
 	}
 
-	CL_Hardware_Info(std::vector<std::string> required_extensions): required_extensions(required_extensions) {
+	CL_Hardware_Info(std::vector<std::string> required_extensions, std::vector<std::string> device_keywords = {}) : required_extensions(required_extensions), device_keywords(device_keywords) {
 		init();
 	}
 
@@ -374,6 +377,7 @@ private:
 	cl_uint num_platforms;
 	std::vector<CL_Platform> platforms;
 	std::vector<cl_device_id*> devices;
+	std::vector<std::string> device_keywords;
 
 	void init() {
 		cl_platform_id* the_platforms = _get_platforms();
@@ -416,6 +420,17 @@ private:
 				exit(1);
 			}
 		}
+		for (auto& keyword : device_keywords) {
+			for (int i = 0; i < valid_devices.size(); i++) {
+				if (std::string(valid_devices[i].find_attribute<char*>("Name")).find(keyword) == std::string::npos) {
+					valid_devices.erase(valid_devices.begin() + i);
+				}
+			}
+			if (valid_devices.size() == 0) {
+				std::cout << "Error! No device name contains the requested keywords";
+				exit(1);
+			}
+		}
 		CL_Device chosen_device = valid_devices[0];
 		device_to_use = chosen_device.get_id();
 		std::cout << "Chosen Device: " << chosen_device.attribute_desc<char*>("Name") << std::endl;
@@ -439,11 +454,155 @@ private:
 	}
 };
 
+class CL_Kernel {
+public:
+	CL_Kernel(CL_Program program, const char* function_name): program(program), function_name(function_name) {
+		cl_int err;
+
+		cl_kernel _kernel = clCreateKernel(program.get_program(), function_name, &err);
+		assert_cl_success(err, "Error creating OpenCL kernel");
+
+		kernel = kernel;
+	}
+
+	const char* get_function_name() {
+		return function_name;
+	}
+
+private:
+	CL_Program program;
+	const char* function_name;
+	cl_kernel kernel;
+};
+
+class CL_Program {
+public:
+	CL_Program(const char* filename, CL_Context context): context(context) {
+		cl_int err;
+
+		std::string s = read_file(filename);
+		const char* program_source = s.c_str();
+		size_t source_length = 0;
+
+		cl_program _program = clCreateProgramWithSource(context.get_context(), 1, &program_source, &source_length, &err);
+		assert_cl_success(err, "Error creating program");
+
+		program = _program;
+
+		build_program();
+	}
+
+	void build_program() {
+		;
+		cl_int err = clBuildProgram(program, 1, (const cl_device_id*)context.get_device_id(), "", nullptr, nullptr);
+
+		if (err) {
+			std::cout << "Error building OpenCL program\n\tCode: " << err << "\n\n";
+
+			cl_int info_err;
+
+			char* log;
+			size_t log_length;
+			
+			info_err = clGetProgramBuildInfo(program, context.get_device_id(), CL_PROGRAM_BUILD_LOG, 0, nullptr, &log_length);
+
+			log = (char*)malloc(log_length);
+
+			info_err = clGetProgramBuildInfo(program, context.get_device_id(), CL_PROGRAM_BUILD_LOG, log_length, log, nullptr);
+
+			assert_cl_success(info_err, "Error getting OpenCL program build info");
+
+			std::cout << log << "\n";
+
+			exit(1);
+		}
+	}
+
+	cl_program get_program() {
+		return program;
+	}
+private:
+	cl_program program;
+	CL_Context context;
+};
+
+class CL_Context {
+public:
+	std::vector<CL_Program> programs;
+
+	CL_Context(cl_device_id device_id, cl_context_properties* props): device_id(device_id), props(props) {
+		make();
+	}
+
+	void update_props(cl_context_properties* _props, bool should_remake = true) {
+		props = _props;
+		if (should_remake)
+			make();
+	}
+
+	void change_device(cl_device_id id, bool should_remake = true) {
+		device_id = id;
+		if (should_remake)
+			make();
+	}
+
+	void make() {
+		create_context();
+		create_queue();
+	}
+
+	void create_context() {
+		cl_int err;
+
+		cl_context _context = clCreateContext((const cl_context_properties*)props, 1, &device_id, nullptr, nullptr, &err);
+		assert_cl_success(err, "Error creating OpenCL context");
+		context = _context;
+	}
+
+	void create_queue() {
+		cl_int err;
+
+		cl_command_queue _queue = clCreateCommandQueueWithProperties(context, device_id, 0, &err);
+		assert_cl_success(err, "Error creating OpenCL command queue");
+		queue = _queue;
+	}
+
+	void create_program(const char* function_name) {
+		//programs.push_back(CL_Program(function_name, *this));
+	}
+
+	cl_device_id get_device_id() {
+		return device_id;
+	}
+
+	cl_context_properties* get_properties() {
+		return props;
+	}
+
+	cl_context get_context() {
+		return context;
+	}
+
+	cl_command_queue get_command_queue() {
+		return queue;
+	}
+
+private:
+	cl_device_id device_id;
+	cl_context_properties* props;
+	cl_context context;
+	cl_command_queue queue;
+
+
+};
+
 struct CL_Buffer {
 	cl_mem buffer;
 	size_t size;
 
-	CL_Buffer(cl_mem buffer, size_t size) : buffer(buffer), size(size) {};
+	CL_Buffer(cl_mem buffer, size_t size) : buffer(buffer), size(size) {
+		
+	};
 };
 
 class CL_Util {
@@ -479,6 +638,16 @@ public:
 		_create_context();
 		_create_command_queue();
 		//init();
+	}
+
+	void set_device_keywords(std::vector<std::string> keywords) {
+		device_keywords = keywords;
+		init();
+	}
+
+	void add_device_keyword(std::string keyword) {
+		device_keywords.push_back(keyword);
+		init();
 	}
 
 	void set_options() {
@@ -523,16 +692,16 @@ public:
 		create_kernel(function_name);
 	}
 
-	cl_mem create_raw_buffer(size_t size) {
+	cl_mem create_raw_buffer(size_t size, cl_mem_flags flags) {
 		cl_int err;
-		cl_mem buffer = clCreateBuffer(context, CL_MEM_READ_ONLY, size, nullptr, &err);
+		cl_mem buffer = clCreateBuffer(context, flags, size, nullptr, &err);
 		assert_cl_success(err, "Error creating OpenCL buffer");
 
 		return buffer;
 	}
 
-	CL_Buffer create_buffer(size_t size) {
-		cl_mem buffer = create_raw_buffer(size);
+	CL_Buffer create_buffer(size_t size, cl_mem_flags flags) {
+		cl_mem buffer = create_raw_buffer(size, flags);
 
 		return CL_Buffer(buffer, size);
 	}
@@ -553,15 +722,21 @@ public:
 	}
 
 	template <typename T>
-	CL_Buffer create_and_write_buffer(size_t size, T* data) {
-		CL_Buffer buffer = create_buffer(size);
+	void write_to_buffer(CL_Buffer buffer, size_t size, T* data) {
 		write_to_buffer(buffer.buffer, size, data);
+	}
+
+	template <typename T>
+	CL_Buffer create_and_write_buffer(size_t size, T* data, cl_mem_flags flags) {
+		CL_Buffer buffer = create_buffer(size, flags);
+		write_to_buffer(buffer.buffer, size, data);
+		//CL_MEM_READ_ONLY
 
 		return buffer;
 	}
 
 	template <typename T>
-	CL_Buffer create_and_write_buffer(T* data) {
+	CL_Buffer create_and_write_buffer(T* data, cl_mem_flags flags) {
 		CL_Buffer buffer = create_buffer(sizeof(data));
 		write_to_buffer(buffer.buffer, sizeof(data), data);
 
@@ -643,6 +818,7 @@ private:
 	cl_context_properties* cl_context_props;
 
 	std::vector<std::string> required_device_extensions;
+	std::vector<std::string> device_keywords;
 
 	cl_device_id device_id;
 	cl_context context;
@@ -655,13 +831,18 @@ private:
 	int current_kernel_arg = 0;
 
 	void init() {
-		hardware_info = CL_Hardware_Info(required_device_extensions);
+		hardware_info = CL_Hardware_Info(required_device_extensions, device_keywords);
 
 		device_id = _get_device_id();
 
 		context = _create_context();
 
 		queue = _create_command_queue();
+
+		if (program) {
+			// NEED TO CREATE A PROGRAM CLASS AND KERNEL CLASS TO REMAKE THE PROGRAM AND KERNEL WITH NEW PROPS
+			;
+		}
 	}
 
 	void _assert_program_build_success(const cl_int err) {
